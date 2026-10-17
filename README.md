@@ -87,3 +87,15 @@ Gamepad: d-pad/stick = move, A = 2, B = 1, X = A, Y = B, Start = +. Hold Tab for
 - [libWiiPy](https://github.com/NinjaCheetah/libWiiPy) for WAD unpacking.
 
 Castlevania: The Adventure ReBirth is © Konami. This project contains no Konami code or assets.
+
+## Disclaimer
+
+This is an unofficial fan project. It is **not affiliated with, endorsed by, or sponsored by** Konami Digital Entertainment, M2 Co., Ltd.
+or Nintendo. *Castlevania: The Adventure ReBirth* and all related names and marks belong to their respective owners. This
+repository contains no game code or game data; you need your own legally obtained copy of the game.
+
+## License
+
+The project's own code is released under the [MIT License](LICENSE). Bundled third-party
+components (fonts, OpenGL headers) keep their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
