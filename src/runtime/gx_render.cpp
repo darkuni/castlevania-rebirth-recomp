@@ -15,6 +15,7 @@
 #include "gx_tex.h"
 #include "gx_render.h"
 #include "config.h"
+#include "audio_ring.h"
 #include <vector>
 #include <unordered_map>
 #include <cmath>
@@ -39,6 +40,7 @@ static inline uint64_t now_ns_r();
 struct ScopeNs { uint64_t& acc; uint64_t t; ScopeNs(uint64_t& a) : acc(a), t(now_ns_r()) {} ~ScopeNs() { acc += now_ns_r() - t; } };
 static inline uint64_t now_ns_r() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 static bool g_gxdbg = getenv("GXDEBUG") != nullptr;
+static long g_fdump = getenv("FRAMEDUMP") ? atol(getenv("FRAMEDUMP")) : -1;
 static int g_frame_draws = 0;
 static std::string g_frame_tex;
 
@@ -99,12 +101,14 @@ static Prog& get_prog() {
 static GLuint g_rfbo = 0, g_efb_msc = 0;
 static int g_cfg_msaa_seen = -1;
 static int g_msaa = 1;
+static GLuint g_efb_dtex = 0;   // single-sample depth as a texture (for Z copies)
 static void create_efb() {
     if (!g_fbo) glGenFramebuffers(1, &g_fbo);
     if (!g_rfbo) glGenFramebuffers(1, &g_rfbo);
     if (!g_efb_color) glGenTextures(1, &g_efb_color);
     if (!g_efb_depth) glGenRenderbuffers(1, &g_efb_depth);
     if (!g_efb_msc) glGenRenderbuffers(1, &g_efb_msc);
+    if (!g_efb_dtex) glGenTextures(1, &g_efb_dtex);
     GLint maxs = 1;
     glGetIntegerv(GL_MAX_SAMPLES, &maxs);
     g_msaa = std::max(1, std::min(g_cfg.msaa, (int)maxs));
@@ -112,23 +116,31 @@ static void create_efb() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PW, PH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glBindRenderbuffer(GL_RENDERBUFFER, g_efb_depth);
-    if (g_msaa > 1) glRenderbufferStorageMultisample(GL_RENDERBUFFER, g_msaa, GL_DEPTH_COMPONENT24, PW, PH);
-    else glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, PW, PH);
+    glBindTexture(GL_TEXTURE_2D, g_efb_dtex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, PW, PH, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
     glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     if (g_msaa > 1) {
+        glBindRenderbuffer(GL_RENDERBUFFER, g_efb_depth);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, g_msaa, GL_DEPTH_COMPONENT24, PW, PH);
         glBindRenderbuffer(GL_RENDERBUFFER, g_efb_msc);
         glRenderbufferStorageMultisample(GL_RENDERBUFFER, g_msaa, GL_RGBA8, PW, PH);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, g_efb_msc);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_efb_depth);
         glBindFramebuffer(GL_FRAMEBUFFER, g_rfbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_efb_color, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, g_efb_dtex, 0);
         glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     } else {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_efb_color, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, g_efb_dtex, 0);
     }
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_efb_depth);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) fprintf(g_log, "[gl] EFB incomplete (MSAA %d)\n", g_msaa);
 }
 // framebuffer to read EFB contents from (resolving MSAA first)
@@ -137,7 +149,7 @@ static GLuint efb_read_fbo() {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, g_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_rfbo);
     glDisable(GL_SCISSOR_TEST);
-    glBlitFramebuffer(0, 0, PW, PH, 0, 0, PW, PH, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(0, 0, PW, PH, 0, 0, PW, PH, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     return g_rfbo;
 }
 
@@ -700,6 +712,81 @@ static void resize_efb(int scale) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     fprintf(g_log, "[gl] internal resolution now %dx%d, MSAA %dx\n", PW, PH, g_msaa);
 }
+// EFB -> texture copies in the requested format. The copy texture is sampled directly
+// (no decode), so it holds what the TEV would read from that format: single-channel
+// formats in all four channels, IA/RA formats as (I,I,I,A), depth formats from the Z buffer.
+static GLuint g_copy_prog = 0, g_copy_vao = 0;
+static GLint g_cu_mode = -1, g_cu_rect = -1, g_cu_col = -1, g_cu_dep = -1, g_cu_half = -1;
+static void copy_convert(GLuint dst_tex, int sx, int sy, int w, int h, int tw, int th, int fmt, bool intensity, bool depth) {
+    if (!g_copy_prog) {
+        const char* vs = "#version 330 core\nvoid main(){ vec2 p = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0 - 1.0; gl_Position = vec4(p, 0.0, 1.0); }\n";
+        const char* fs =
+            "#version 330 core\n"
+            "uniform sampler2D u_col; uniform sampler2D u_dep; uniform int u_mode; uniform vec4 u_rect; uniform int u_half; out vec4 o;\n"
+            "vec4 fetch(vec2 px) { return texture(u_col, px / vec2(textureSize(u_col, 0))); }\n"
+            "void main(){\n"
+            " vec2 px = vec2(u_rect.x + gl_FragCoord.x * u_rect.z, u_rect.y - gl_FragCoord.y * u_rect.w);\n"
+            " int m = u_mode & 15; bool inten = (u_mode & 16) != 0; bool dep = (u_mode & 32) != 0;\n"
+            " if (dep) {\n"
+            "  float d = texelFetch(u_dep, ivec2(px), 0).r;\n"
+            "  float z = floor(clamp(d, 0.0, 1.0) * 16777215.0 + 0.5);\n"
+            "  float hi = floor(z / 65536.0), mid = mod(floor(z / 256.0), 256.0), lo = mod(z, 256.0);\n"
+            "  vec4 c;\n"
+            "  if (m == 9) c = vec4(mid / 255.0);\n"                           // Z8M
+            "  else if (m == 10) c = vec4(lo / 255.0);\n"                      // Z8L
+            "  else if (m == 3 || m == 11) c = vec4(vec3(hi / 255.0), mid / 255.0);\n"   // Z16 (hi,mid)
+            "  else if (m == 12) c = vec4(vec3(mid / 255.0), lo / 255.0);\n"   // Z16L
+            "  else if (m == 6) c = vec4(hi / 255.0, mid / 255.0, lo / 255.0, 1.0);\n"   // Z24X8
+            "  else c = vec4(hi / 255.0);\n"                                   // Z4 / Z8 (high byte)
+            "  o = c; return;\n"
+            " }\n"
+            " vec4 c = fetch(px);\n"
+            " float Y = clamp(dot(c.rgb, vec3(0.257, 0.504, 0.098)) + 16.0 / 255.0, 0.0, 1.0);\n"
+            " if (m == 0 || m == 1 || m == 8) o = inten ? vec4(Y) : vec4(c.r);\n"   // I4/I8 or R4/R8
+            " else if (m == 2 || m == 3) o = inten ? vec4(vec3(Y), c.a) : vec4(vec3(c.r), c.a);\n"   // IA4/IA8 or RA
+            " else if (m == 4) o = vec4(c.rgb, 1.0);\n"                        // RGB565
+            " else if (m == 7) o = vec4(c.a);\n"                               // A8
+            " else if (m == 9) o = vec4(c.g);\n"                               // G8
+            " else if (m == 10) o = vec4(c.b);\n"                              // B8
+            " else if (m == 11) o = vec4(vec3(c.r), c.g);\n"                  // RG8
+            " else if (m == 12) o = vec4(vec3(c.g), c.b);\n"                  // GB8
+            " else o = c;\n"                                                   // RGB5A3 / RGBA8
+            "}\n";
+        g_copy_prog = glCreateProgram();
+        glAttachShader(g_copy_prog, compile(GL_VERTEX_SHADER, vs));
+        glAttachShader(g_copy_prog, compile(GL_FRAGMENT_SHADER, fs));
+        glLinkProgram(g_copy_prog);
+        g_cu_mode = glGetUniformLocation(g_copy_prog, "u_mode");
+        g_cu_rect = glGetUniformLocation(g_copy_prog, "u_rect");
+        g_cu_col = glGetUniformLocation(g_copy_prog, "u_col");
+        g_cu_dep = glGetUniformLocation(g_copy_prog, "u_dep");
+        g_cu_half = glGetUniformLocation(g_copy_prog, "u_half");
+        glGenVertexArrays(1, &g_copy_vao);
+    }
+    static GLuint fbo = 0;
+    if (!fbo) glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_tex, 0);
+    glViewport(0, 0, tw * RS, th * RS);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);
+    glDisable(GL_COLOR_LOGIC_OP);
+    glColorMask(1, 1, 1, 1);
+    glUseProgram(g_copy_prog);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_efb_color); glBindSampler(0, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_efb_dtex); glBindSampler(1, 0);
+    glUniform1i(g_cu_col, 0); glUniform1i(g_cu_dep, 1);
+    glUniform1i(g_cu_mode, fmt | (intensity ? 16 : 0) | (depth ? 32 : 0));
+    glUniform1i(g_cu_half, 0);
+    glUniform4f(g_cu_rect, (float)(sx * RS), (float)((EFB_H - sy) * RS), (float)w / tw, (float)h / th);
+    glBindVertexArray(g_copy_vao);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_efb_color);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+    glViewport(0, 0, PW, PH);
+}
+
 static void efb_copy_impl(uint32_t val);
 static void efb_copy(uint32_t val) { gx_flush(); ScopeNs _sc(g_ns_copy); efb_copy_impl(val); }
 static void efb_copy_impl(uint32_t val) {
@@ -743,6 +830,11 @@ static void efb_copy_impl(uint32_t val) {
             if (perf && t - t0 > 5000000000ull && g_perf_text[0]) {
                 fprintf(g_log, "[perf] %s\n", g_perf_text);
                 double sec = (t - t0) / 1e9;
+                { extern uint64_t g_ai_skipped; AudioStats a = audio_ring_stats();
+                  static uint64_t u0 = 0, d0 = 0, k0 = 0;
+                  fprintf(g_log, "[audio] underruns %llu, dropped %llu frames, AI periods skipped %llu, buffered %d ms\n",
+                          (unsigned long long)(a.underruns - u0), (unsigned long long)(a.dropped_frames - d0), (unsigned long long)(g_ai_skipped - k0), a.buffered_ms);
+                  u0 = a.underruns; d0 = a.dropped_frames; k0 = g_ai_skipped; }
                 fprintf(g_log, "[perf] %.1f fps | VI %.1f/s (want 59.9) | audio %.0f/s (want 333) | GPU draw %.0f%%, copies %.0f%% of time | %.0f draws -> %.0f GL calls per frame\n",
                         (g_frame - f0) / sec, (g_vi_count - vi0) / sec, (g_ax_frames - ax0) / sec, g_ns_draw / 1e7 / sec, g_ns_copy / 1e7 / sec,
                         (double)g_draw_calls_in / std::max<uint64_t>(1, g_frame - f0), (double)g_batches / std::max<uint64_t>(1, g_frame - f0));
@@ -795,15 +887,24 @@ static void efb_copy_impl(uint32_t val) {
         glBindTexture(GL_TEXTURE_2D, e.tex);
         if (e.w != tw || e.h != th) glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw * RS, th * RS, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         e.w = tw; e.h = th; e.frame = g_frame; e.gen++;
-        // blit EFB region (flipping to top-down texture orientation)
-        static GLuint tmpfbo = 0;
-        if (!tmpfbo) glGenFramebuffers(1, &tmpfbo);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tmpfbo);
-        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, e.tex, 0);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, src_fbo);
-        glDisable(GL_SCISSOR_TEST);
-        glBlitFramebuffer(sx * RS, (EFB_H - sy) * RS, (sx + w) * RS, (EFB_H - sy - h) * RS, 0, 0, tw * RS, th * RS, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        int cfmt = (int)((val >> 4) & 7) + (int)((val >> 3) & 1) * 8;   // bits 3-6, low bit is the msb
+        bool inten = (val >> 15) & 1;
+        bool zcopy = (bp[0x43] & 7) == 3;     // pixel format Z24: the copy reads the depth buffer
+        if (g_gxdbg || (long)g_frame == g_fdump) fprintf(g_log, "[copy] frame %llu dst %08X src %d,%d %dx%d -> %dx%d fmt %d%s%s\n", (unsigned long long)g_frame,
+                                                         dst, sx, sy, w, h, tw, th, cfmt, inten ? " intensity" : "", zcopy ? " DEPTH" : "");
+        if (!zcopy && (cfmt == 6 || cfmt == 5)) {
+            // plain color: blit EFB region (flipping to top-down texture orientation)
+            static GLuint tmpfbo = 0;
+            if (!tmpfbo) glGenFramebuffers(1, &tmpfbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tmpfbo);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, e.tex, 0);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, src_fbo);
+            glDisable(GL_SCISSOR_TEST);
+            glBlitFramebuffer(sx * RS, (EFB_H - sy) * RS, (sx + w) * RS, (EFB_H - sy - h) * RS, 0, 0, tw * RS, th * RS, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
+        } else {
+            copy_convert(e.tex, sx, sy, w, h, tw, th, cfmt, inten, zcopy);
+        }
         // keep the RAM copy's texture cache entry from shadowing this copy
     }
     if (clear) {

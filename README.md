@@ -16,6 +16,7 @@ into a `game` folder and generates the C++ from the executable inside it.
   HUD and stage timer running (headless Linux test build).
 - A Windows build has been produced but not yet play-tested on Windows.
 - Audio runs but has not been verified by ear. The game draws a pillarboxed 4:3 picture in 16:9 mode.
+- v0.2: fixes carried over from Chocobo's Dungeon - audio (no dropped audio periods, DSP-done delivered first, 60 ms jitter buffer), game speed 1x-8x (the unlimited mode could lock the game), depth and format EFB copies.
 
 Castlevania ReBirth runs on the same M2 engine and the same Nintendo SDK build as Contra ReBirth;
 this repository shares its recompiler and runtime with

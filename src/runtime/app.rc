@@ -1,7 +1,7 @@
 1 ICON "app.ico"
 1 VERSIONINFO
-FILEVERSION 0,3,0,0
-PRODUCTVERSION 0,3,0,0
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN
@@ -9,8 +9,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "Castlevania: The Adventure ReBirth (native port)"
       VALUE "ProductName", "Castlevania ReBirth native port"
-      VALUE "FileVersion", "0.3"
-      VALUE "ProductVersion", "0.3"
+      VALUE "FileVersion", "0.2"
+      VALUE "ProductVersion", "0.2"
       VALUE "OriginalFilename", "castlevania.exe"
     END
   END

@@ -19,6 +19,7 @@
 #include "config.h"
 #include "hostinput.h"
 #include "overlay.h"
+#include "audio_ring.h"
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -72,6 +73,7 @@ bool gl_platform_init(int w, int h) {
     // audio: 32 kHz stereo s16, fed from the AX output
     SDL_AudioSpec want = {}, have = {};
     want.freq = 32000; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 512;
+    want.callback = [](void*, Uint8* stream, int len) { audio_ring_pull((int16_t*)stream, len / 4); };
     g_audio = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (g_audio) SDL_PauseAudioDevice(g_audio, 0);
     for (int i = 0; i < SDL_NumJoysticks(); i++)
@@ -89,10 +91,7 @@ void gl_platform_make_current() {
 }
 
 void platform_audio_push(const int16_t* lr, int frames) {
-    if (!g_audio) return;
-    // keep latency bounded (~100 ms)
-    if (SDL_GetQueuedAudioSize(g_audio) > 32000 * 4 / 10) return;
-    SDL_QueueAudio(g_audio, lr, frames * 4);
+    if (g_audio) audio_ring_push(lr, frames);
 }
 
 static void update_input() {

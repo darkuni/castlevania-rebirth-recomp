@@ -15,7 +15,7 @@ struct Config {
     int anisotropy = 16;               // anisotropic texture filtering: 1 (off), 2, 4, 8, 16
     bool smooth_textures = true;       // trilinear mipmaps (generated when the game has none)
     bool swap_ab_xy = false;           // gamepad: swap A<->B and X<->Y (Nintendo-style positions)
-    int speed = 1;                     // game speed: 1 = normal (60 Hz), 2, 3 = 2x/3x, 0 = unlimited
+    int speed = 1;                     // game speed multiplier 1..8 (fast-forward)
     int msaa = 4;                      // anti-aliasing samples: 1 (off), 2, 4, 8
 };
 extern Config g_cfg;

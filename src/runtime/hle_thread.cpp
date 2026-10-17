@@ -142,6 +142,16 @@ static std::condition_variable g_irq_cv;
 static std::deque<std::function<void(Ctx*)>> g_irq_q;
 
 
+// Queue an interrupt ahead of everything already pending (an event the hardware would
+// raise before the queued ones, e.g. the DSP finishing a frame within the current period).
+void post_irq_front(std::function<void(Ctx*)> fn) {
+    std::lock_guard<std::mutex> g(g_qmx);
+    g_irq_q.push_front(std::move(fn));
+    g_irq_posted++;
+    g_irq_pending.store(1);
+    g_irq_cv.notify_all();
+}
+
 void post_irq(std::function<void(Ctx*)> fn) {
     std::lock_guard<std::mutex> g(g_qmx);
     g_irq_q.push_back(std::move(fn));

@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
 
 static std::mutex g_ui_mx;
 static bool g_open = false;
@@ -42,7 +43,7 @@ static const std::vector<Item>& items() {
         {"Frame rate display", {"Off", "On"}, nullptr},
         {"Anti-aliasing", {"Off", "2x MSAA", "4x MSAA", "8x MSAA"}, "Smooths jagged edges of 3D models."},
         {"Texture smoothing", {"Off (original)", "On (trilinear)"}, "Mipmaps: removes shimmer on distant textures."},
-        {"Game speed", {"Normal", "2x", "3x", "Unlimited"}, "Fast-forward. Hold Tab or click the right stick for a burst."},
+        {"Game speed", {"Normal", "2x", "3x", "4x", "5x", "6x", "7x", "8x"}, "Fast-forward. Hold Tab or click the right stick for a burst."},
         {"Anisotropic filter", {"Off", "2x", "4x", "8x", "16x"}, "Sharper floors and walls seen at an angle."},
         {"Close menu", {}, nullptr},
         {"Quit game", {}, nullptr},
@@ -60,7 +61,7 @@ static int get_value(int i) {
         case 6: return g_cfg.show_perf ? 1 : 0;
         case 7: return g_cfg.msaa >= 8 ? 3 : g_cfg.msaa >= 4 ? 2 : g_cfg.msaa >= 2 ? 1 : 0;
         case 8: return g_cfg.smooth_textures ? 1 : 0;
-        case 9: return g_cfg.speed == 0 ? 3 : g_cfg.speed - 1;
+        case 9: return std::max(1, std::min(8, g_cfg.speed)) - 1;
         case 10: return g_cfg.anisotropy >= 16 ? 4 : g_cfg.anisotropy >= 8 ? 3 : g_cfg.anisotropy >= 4 ? 2 : g_cfg.anisotropy >= 2 ? 1 : 0;
     }
     return 0;
@@ -76,7 +77,7 @@ static void set_value(int i, int v) {
         case 6: g_cfg.show_perf = v; break;
         case 7: g_cfg.msaa = v ? 1 << v : 1; break;
         case 8: g_cfg.smooth_textures = v; break;
-        case 9: g_cfg.speed = v == 3 ? 0 : v + 1; break;
+        case 9: g_cfg.speed = v + 1; break;
         case 10: g_cfg.anisotropy = v ? 1 << v : 1; break;
     }
     config_save();

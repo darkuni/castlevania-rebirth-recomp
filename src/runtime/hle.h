@@ -18,6 +18,7 @@ uint32_t guest_call(Ctx* c, uint32_t fn, std::initializer_list<uint32_t> args);
 // Deferred "interrupt" work. Delivered on a guest thread at the next safe
 // point where interrupts are enabled.
 void post_irq(std::function<void(Ctx*)> fn);
+void post_irq_front(std::function<void(Ctx*)> fn);
 
 // Threads
 void threads_init_main(Ctx* c);

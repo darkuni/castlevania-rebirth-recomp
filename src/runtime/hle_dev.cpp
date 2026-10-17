@@ -5,6 +5,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <algorithm>
 
 void mmio_poke(uint32_t a, uint32_t v);
 uint64_t g_vi_count = 0;
@@ -19,9 +20,10 @@ void raise_interrupt(Ctx* c, int n) {
     guest_call(c, h, {(uint32_t)n, cur});
 }
 
-// Retrace pacing: normal speed is 59.94 Hz. Faster speeds shorten the period; unlimited
-// (speed 0 or the fast-forward button) raises the next retrace as soon as the game has
-// handled the previous one.
+// Retrace pacing: normal speed is 59.94 Hz; faster game speeds shorten the period.
+// The fast-forward button runs at 4x (or double the set speed), capped at 8x.
+// Retraces are always paced: raising the next one as soon as the previous handler
+// returned kept the interrupt handler busy forever and starved the game.
 #include "config.h"
 #include "hostinput.h"
 static void vi_thread() {
@@ -29,17 +31,13 @@ static void vi_thread() {
     auto next = clk::now();
     static const double env_hz = getenv("VI_HZ") ? atof(getenv("VI_HZ")) : 0;
     for (;;) {
-        bool turbo = (g_host_input.buttons & IN_TURBO) || g_cfg.speed == 0;
-        double hz = env_hz > 0 ? env_hz : 59.94 * (g_cfg.speed > 1 ? g_cfg.speed : 1);
-        if (turbo && env_hz <= 0) {
-            while (vi_inflight.load()) std::this_thread::sleep_for(std::chrono::microseconds(200));
-            next = clk::now();
-        } else {
-            next += std::chrono::nanoseconds((long long)(1e9 / hz));
-            precise_sleep_until(next);
-            if (clk::now() - next > std::chrono::milliseconds(100)) next = clk::now();   // after a stall or turbo
-            if (vi_inflight.load()) continue;
-        }
+        int speed = std::max(1, std::min(8, g_cfg.speed));
+        if (g_host_input.buttons & IN_TURBO) speed = std::min(8, std::max(4, speed * 2));
+        double hz = env_hz > 0 ? env_hz : 59.94 * speed;
+        next += std::chrono::nanoseconds((long long)(1e9 / hz));
+        precise_sleep_until(next);
+        if (clk::now() - next > std::chrono::milliseconds(100)) next = clk::now();   // after a stall
+        if (vi_inflight.load()) continue;
         vi_inflight.store(1);
         post_irq([](Ctx* c) {
             g_vi_count++;

@@ -31,7 +31,24 @@ bool gl_platform_init(int, int) {
 }
 static thread_local bool t_current = false;
 void gl_platform_make_current() { if (t_current) return; eglMakeCurrent(g_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, g_ctx); t_current = true; }
-void platform_audio_push(const int16_t*, int) {}
+// Simulated sound device for headless runs: pulls 32 kHz audio in real time from the
+// jitter buffer so dropouts can be counted (see the [audio] line in the perf log).
+#include "audio_ring.h"
+#include "hostclock.h"
+#include <thread>
+#include <chrono>
+void platform_audio_push(const int16_t* lr, int frames) {
+    static bool started = false;
+    if (!started) {
+        started = true;
+        std::thread([] {
+            int16_t buf[512 * 2];
+            auto next = std::chrono::steady_clock::now();
+            for (;;) { next += std::chrono::microseconds(16000); precise_sleep_until(next); audio_ring_pull(buf, 512); }
+        }).detach();
+    }
+    audio_ring_push(lr, frames);
+}
 void gl_platform_present(unsigned, int, int) {}
 bool gl_platform_poll() { return true; }
 #endif

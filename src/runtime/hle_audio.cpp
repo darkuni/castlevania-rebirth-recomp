@@ -13,6 +13,7 @@
 #include <atomic>
 #include <vector>
 #include <mutex>
+#include <cstdlib>
 
 static uint32_t g_ai_cb = 0;           // guest AI DMA callback
 static uint32_t g_ai_buf = 0, g_ai_len = 0;
@@ -22,6 +23,8 @@ static std::vector<uint32_t> g_mail;
 static FILE* g_wav = nullptr;
 static uint32_t g_wav_bytes = 0;
 uint64_t g_ax_frames = 0;
+uint64_t g_ai_skipped = 0;   // AI periods dropped because the game had not serviced earlier ones
+static int g_ai_limit = getenv("AI_LIMIT") ? atoi(getenv("AI_LIMIT")) : 16;   // up to 48 ms of backlog is caught up
 
 void audio_out(const int16_t* lr, int frames);   // host output (platform)
 
@@ -36,7 +39,7 @@ static void ai_thread() {
         next += period;
         precise_sleep_until(next);
         if (clk::now() - next > std::chrono::milliseconds(100)) next = clk::now();   // don't spiral after stalls
-        if (g_ai_inflight.load() > 2) continue;
+        if (g_ai_inflight.load() > g_ai_limit) { g_ai_skipped++; continue; }
         g_ai_inflight++;
         post_irq([](Ctx* c) {
             // the buffer that just "played"
@@ -69,7 +72,7 @@ void hle_DSPSendMailToDSP(Ctx* c) {
         ax_process(phys_to_guest(list), words);
         g_ax_frames++;
         // DSP finished the frame -> AX task resume callback
-        post_irq([](Ctx* ic) { guest_call(ic, G_AX_RESUME_CB, {}); });
+        post_irq_front([](Ctx* ic) { guest_call(ic, G_AX_RESUME_CB, {}); });   // before any queued AI periods
     }
     if (g_mail.size() > 16) g_mail.clear();
 }

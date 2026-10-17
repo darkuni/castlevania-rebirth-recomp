@@ -20,7 +20,7 @@ static void set(const std::string& k, const std::string& v) {
     else if (k == "show_perf") g_cfg.show_perf = b();
     else if (k == "anisotropy") { int a = atoi(v.c_str()); g_cfg.anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1; }
     else if (k == "swap_ab_xy") g_cfg.swap_ab_xy = b();
-    else if (k == "speed") { int a = atoi(v.c_str()); g_cfg.speed = a <= 0 ? 0 : a >= 3 ? 3 : a; }
+    else if (k == "speed") { int a = atoi(v.c_str()); g_cfg.speed = a < 1 ? 1 : a > 8 ? 8 : a; }
     else if (k == "smooth_textures") g_cfg.smooth_textures = b();
     else if (k == "msaa") { int a = atoi(v.c_str()); g_cfg.msaa = a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1; }
 }
@@ -89,8 +89,8 @@ void config_save() {
         "smooth_textures = %d\n"
         "; Anti-aliasing (MSAA samples): 1 = off, 2, 4, 8\n"
         "msaa = %d\n"
-        "; Game speed: 1 = normal, 2 = double, 3 = triple, 0 = unlimited (as fast as the PC allows).\n"
-        "; The game logic is tied to its frame rate, so this is fast-forward. Hold Tab (or click the right stick) for unlimited.\n"
+        "; Game speed: 1 = normal ... 8 = eight times (as far as the PC keeps up).\n"
+        "; The game logic is tied to its frame rate, so this is fast-forward. Hold Tab (or click the right stick) for 4x (or double the set speed, up to 8x).\n"
         "speed = %d\n",
         g_cfg.resolution_scale, g_cfg.widescreen, g_cfg.vsync, g_cfg.fullscreen, g_cfg.window_scale,
         g_cfg.controls.c_str(), g_cfg.swap_ab_xy, g_cfg.show_perf, g_cfg.anisotropy, g_cfg.smooth_textures, g_cfg.msaa, g_cfg.speed);
