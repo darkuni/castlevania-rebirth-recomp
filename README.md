@@ -12,8 +12,8 @@ run as recompiled code.
 ## Download
 
 Get the latest `CastlevaniaReBirth-<version>-win64.zip` from [Releases](https://github.com/darkuni/castlevania-rebirth-recomp/releases),
-unzip it, drag your WAD onto `make-game-folder.bat` (needs [Python 3.11+](https://www.python.org/downloads/))
-and run `castlevania.exe`. The zip's `README.txt` has the controls and keys. To build it yourself, see
+unzip it, put your WAD in the same folder and run `castlevania.exe`: the first start builds the
+`game` folder from it. Nothing else to install. The zip's `README.txt` has the controls and keys. To build it yourself, see
 [Building](#building).
 
 ## Status
@@ -23,6 +23,8 @@ and run `castlevania.exe`. The zip's `README.txt` has the controls and keys. To 
 - The game draws a pillarboxed 4:3 picture in 16:9 mode.
 
 Changes:
+- **v0.4** (Oct 30, 2026): no Python or setup tool needed - on the first start the game builds its `game` folder
+  from your WAD placed next to the exe (decryption and unpacking are built in).
 - **v0.3** (Oct 30, 2026): graphics (the GX command stream) is processed and drawn on its own thread beside the
   game thread, like the Wii's GPU; faster vertex handling (index buffers, cached vertex setup); audio is sent
   to the sound card straight from the mixer (no clicks at 3 ms frame boundaries); `castlevania.log` next to the exe.
